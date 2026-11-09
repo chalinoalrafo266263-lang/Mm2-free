@@ -37,7 +37,7 @@ task.spawn(function()
 	TextLabel.Name = "VersionText"
 	TextLabel.Size = UDim2.new(1, 0, 1, 0)
 	TextLabel.BackgroundTransparency = 1
-	TextLabel.Text = "v0.2"
+	TextLabel.Text = "v0.3"
 	TextLabel.TextColor3 = Color3.fromRGB(0, 0, 0)
 	TextLabel.Font = Enum.Font.GothamBold
 	TextLabel.TextSize = 14
@@ -599,6 +599,10 @@ function disableAntiFling()
 	end
 end
 
+function isAntiFlingEnabled()
+	return antiFlingEnabled
+end
+
 t1.value22 = false
 t1.value23 = false
 t1.value24 = false
@@ -696,6 +700,255 @@ function applyFlingGun()
 		end
 	end
 end
+
+-- ============================================================= Auto Shoot
+-- Tecnica del remote interno "Shoot" de la Gun de MM2:
+-- gun.Shoot:FireServer(miCFrame, cframeDelObjetivo) funciona incluso con el
+-- arma en la mochila. El murderer se detecta por rol o por llevar el Knife.
+
+t1.value56 = false
+t1.value57 = 0
+t1.value58 = nil
+local SHOOT_COOLDOWN = 0.18
+local SHOOT_SPREAD = 0.08
+
+local function playerHasKnife(player)
+	local character = player.Character
+
+	if character and character:FindFirstChild("Knife") then
+		return true
+	end
+
+	local backpack = player:FindFirstChild("Backpack")
+
+	if backpack and backpack:FindFirstChild("Knife") then
+		return true
+	end
+
+	return false
+end
+
+local function findMurdererTarget()
+	local myCharacter = LP.Character
+	local myRoot = myCharacter and myCharacter:FindFirstChild("HumanoidRootPart")
+
+	if not myRoot then
+		return nil
+	end
+
+	local nearest = nil
+	local nearestDist = math.huge
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player ~= LP and player.Character then
+			local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+			local rootPart = player.Character:FindFirstChild("HumanoidRootPart")
+
+			if humanoid and humanoid.Health > 0 and rootPart and (getRole(player) == "Murderer" or playerHasKnife(player)) then
+				local dist = (myRoot.Position - rootPart.Position).Magnitude
+
+				if dist < nearestDist then
+					nearest = player
+					nearestDist = dist
+				end
+			end
+		end
+	end
+
+	return nearest
+end
+
+local function isTargetVisible(targetPlayer)
+	local myCharacter = LP.Character
+	local myRoot = myCharacter and myCharacter:FindFirstChild("HumanoidRootPart")
+	local targetCharacter = targetPlayer and targetPlayer.Character
+	local targetRoot = targetCharacter and targetCharacter:FindFirstChild("HumanoidRootPart")
+
+	if not (myRoot and targetRoot) then
+		return false
+	end
+
+	local raycastParams = RaycastParams.new()
+
+	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+	raycastParams.FilterDescendantsInstances = { myCharacter }
+
+	local raycastResult = workspace:Raycast(myRoot.Position, targetRoot.Position - myRoot.Position, raycastParams)
+
+	if not raycastResult then
+		return true
+	end
+
+	return raycastResult.Instance:IsDescendantOf(targetCharacter)
+end
+
+local function findGunTool()
+	local character = LP.Character
+
+	if character then
+		for _, child in ipairs(character:GetChildren()) do
+			if child:IsA("Tool") and (child:FindFirstChild("Shoot") or child.Name == "Gun" or child.Name == "Revolver") then
+				return child, child:FindFirstChild("Shoot")
+			end
+		end
+	end
+
+	local backpack = LP:FindFirstChild("Backpack")
+
+	if backpack then
+		for _, child in ipairs(backpack:GetChildren()) do
+			if child:IsA("Tool") and (child:FindFirstChild("Shoot") or child.Name == "Gun" or child.Name == "Revolver") then
+				return child, child:FindFirstChild("Shoot")
+			end
+		end
+	end
+
+	return nil, nil
+end
+
+local function equipGunNow()
+	local humanoid = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+
+	if not humanoid then
+		return nil, nil
+	end
+
+	local gun, shootRemote = findGunTool()
+
+	if gun and gun.Parent == LP.Character then
+		return gun, shootRemote
+	end
+
+	if gun then
+		pcall(function()
+			humanoid:EquipTool(gun)
+		end)
+
+		return findGunTool()
+	end
+
+	return nil, nil
+end
+
+local function tryPickupDroppedGun()
+	local character = LP.Character
+	local hrp = character and character:FindFirstChild("HumanoidRootPart")
+
+	if not hrp then
+		return
+	end
+
+	for _, child in ipairs(workspace:GetChildren()) do
+		if child:IsA("Tool") then
+			local lower = child.Name:lower()
+
+			if lower:find("gun") or lower:find("revolver") then
+				local Handle = child:FindFirstChild("Handle")
+				local pos = nil
+
+				if Handle and Handle:IsA("BasePart") then
+					pos = Handle.Position
+				elseif child.PrimaryPart then
+					pos = child.PrimaryPart.Position
+				end
+
+				if pos then
+					hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
+
+					local ClickDetector = child:FindFirstChildWhichIsA("ClickDetector")
+
+					if ClickDetector then
+						pcall(function()
+							fireclickdetector(ClickDetector)
+						end)
+					end
+
+					pcall(function()
+						child.Parent = LP:FindFirstChild("Backpack")
+					end)
+
+					return
+				end
+			end
+		end
+	end
+end
+
+function shootMurdererOnce(force)
+	if not force and tick() - t1.value57 < SHOOT_COOLDOWN then
+		return false
+	end
+
+	local murderer = findMurdererTarget()
+
+	if not murderer then
+		return false
+	end
+
+	if not force and not isTargetVisible(murderer) then
+		return false
+	end
+
+	local myCharacter = LP.Character
+	local myRoot = myCharacter and myCharacter:FindFirstChild("HumanoidRootPart")
+	local murdererRoot = murderer.Character and murderer.Character:FindFirstChild("HumanoidRootPart")
+
+	if not (myRoot and murdererRoot) then
+		return false
+	end
+
+	local gun, shootRemote = equipGunNow()
+
+	if not gun then
+		tryPickupDroppedGun()
+
+		return false
+	end
+
+	t1.value57 = tick()
+
+	local aimCFrame = murdererRoot.CFrame + Vector3.new(
+		(math.random() - 0.5) * SHOOT_SPREAD,
+		(math.random() - 0.5) * SHOOT_SPREAD,
+		(math.random() - 0.5) * SHOOT_SPREAD
+	)
+
+	local fired = false
+
+	if shootRemote then
+		fired = pcall(function()
+			shootRemote:FireServer(myRoot.CFrame, aimCFrame)
+		end)
+	end
+
+	if not fired then
+		pcall(function()
+			local createBeam = gun:FindFirstChild("KnifeLocal")
+
+			if createBeam and createBeam:FindFirstChild("CreateBeam") then
+				local remoteFunction = createBeam.CreateBeam:FindFirstChildWhichIsA("RemoteFunction")
+
+				if remoteFunction then
+					remoteFunction:InvokeServer(1, murdererRoot.Position, "AH2")
+				end
+			end
+		end)
+	end
+
+	return true
+end
+
+task.spawn(function()
+	while true do
+		task.wait(0.1)
+
+		if t1.value56 and t1.value6 and t1.value6.Parent then
+			pcall(function()
+				shootMurdererOnce(false)
+			end)
+		end
+	end
+end)
 
 t1.value25 = nil
 t1.value26 = {}
@@ -2655,6 +2908,33 @@ v348:Toggle({
 	end
 })
 
+local tabAutoShoot = v116:Tab({
+	Title = "Auto Shoot",
+	Icon = "target"
+})
+
+tabAutoShoot:Toggle({
+	Title = "Auto Shoot (Murderer visible)",
+	Description = "Equipar y disparar cuando ve al Murderer",
+	Default = false,
+	Callback = function(p26)
+		t1.value56 = p26
+	end
+})
+
+tabAutoShoot:Button({
+	Title = "Disparar Ahora",
+	Description = "Dispara al Murderer sin importar la vista",
+	Callback = function()
+		shootMurdererOnce(true)
+	end
+})
+
+tabAutoShoot:Label({
+	Title = "Requiere ser Sheriff o tener la Gun",
+	Description = "Detecta al Murderer por rol o cuchillo"
+})
+
 local v349 = v116:Tab({
 	Title = "God Mode",
 	Icon = "shield"
@@ -2816,6 +3096,145 @@ v353:Button({
 		print("TikTok de soporte copiado!")
 	end
 })
+-- ============================================================= Config
+local CONFIG_FILE = "yupitactico_hub_config.json"
+
+local function hasFileAPI()
+	local ok, result = pcall(function()
+		return type(writefile) == "function" and type(readfile) == "function"
+	end)
+
+	return ok and result == true
+end
+
+function saveConfig()
+	if not hasFileAPI() then
+		print("[yupitactico hub] Tu executor no soporta writefile/readfile")
+
+		return
+	end
+
+	local data = {
+		autoFarm = _G.MM2.autoFarm == true,
+		autoGun = _G.MM2.autoGun == true,
+		flingMurderer = t1.value22 == true,
+		flingSheriff = t1.value23 == true,
+		flingAll = t1.value24 == true,
+		autoShoot = t1.value56 == true,
+		antiFling = isAntiFlingEnabled() == true,
+		rutaSpeed = _G.MM2.rutaSpeed
+	}
+
+	local ok, err = pcall(function()
+		writefile(CONFIG_FILE, HttpService:JSONEncode(data))
+	end)
+
+	if ok then
+		print("[yupitactico hub] Config guardada: " .. CONFIG_FILE)
+	else
+		print("[yupitactico hub] Error al guardar config: " .. tostring(err))
+	end
+end
+
+function loadConfig(silent)
+	if not hasFileAPI() then
+		if not silent then
+			print("[yupitactico hub] Tu executor no soporta writefile/readfile")
+		end
+
+		return
+	end
+
+	local okRead, content = pcall(readfile, CONFIG_FILE)
+
+	if not okRead or type(content) ~= "string" then
+		if not silent then
+			print("[yupitactico hub] Todavia no hay config guardada")
+		end
+
+		return
+	end
+
+	local okDecode, data = pcall(function()
+		return HttpService:JSONDecode(content)
+	end)
+
+	if not okDecode or type(data) ~= "table" then
+		if not silent then
+			print("[yupitactico hub] La config guardada no es valida")
+		end
+
+		return
+	end
+
+	if type(data.rutaSpeed) == "number" then
+		_G.MM2.rutaSpeed = data.rutaSpeed
+	end
+
+	if data.autoFarm == true and not _G.MM2.autoFarm then
+		_G.MM2.autoFarm = true
+		startCoinFarm()
+
+		if t1.value1 then
+			t1.value1.BackgroundColor3 = Color3.fromRGB(50, 255, 50)
+			t1.value1.Text = "AUTO FARM 50%: ON"
+		end
+	end
+
+	_G.MM2.autoGun = data.autoGun == true
+
+	if data.flingMurderer == true then
+		t1.value22 = true
+		t1.value23 = false
+		t1.value24 = false
+	elseif data.flingSheriff == true then
+		t1.value23 = true
+		t1.value22 = false
+		t1.value24 = false
+	elseif data.flingAll == true then
+		t1.value24 = true
+		t1.value22 = false
+		t1.value23 = false
+	end
+
+	if data.autoShoot == true then
+		t1.value56 = true
+	end
+
+	if data.antiFling == true then
+		enableAntiFling()
+	end
+
+	if not silent then
+		print("[yupitactico hub] Config cargada")
+	end
+end
+
+local tabConfig = v116:Tab({
+	Title = "Config",
+	Icon = "save"
+})
+
+tabConfig:Button({
+	Title = "Guardar Config",
+	Description = "Guarda tus opciones activas en el executor",
+	Callback = function()
+		saveConfig()
+	end
+})
+
+tabConfig:Button({
+	Title = "Cargar Config",
+	Description = "Aplica la config guardada",
+	Callback = function()
+		loadConfig(false)
+	end
+})
+
+tabConfig:Label({
+	Title = "La config se carga automaticamente al abrir el script",
+	Description = "Los toggles de la interfaz pueden no actualizarse visualmente"
+})
 v116:Tab({
 	Title = "Settings",
 	Icon = "settings"
@@ -2874,4 +3293,10 @@ v116:Tab({
 		stopAnimation()
 	end
 })
-print("yupitactico hub v0.2 cargado correctamente!")
+task.spawn(function()
+	task.wait(1)
+	pcall(function()
+		loadConfig(true)
+	end)
+end)
+print("yupitactico hub v0.3 cargado correctamente!")
