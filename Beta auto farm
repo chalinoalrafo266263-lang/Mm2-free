@@ -37,7 +37,7 @@ task.spawn(function()
 	TextLabel.Name = "VersionText"
 	TextLabel.Size = UDim2.new(1, 0, 1, 0)
 	TextLabel.BackgroundTransparency = 1
-	TextLabel.Text = "v0.3"
+	TextLabel.Text = "v0.4"
 	TextLabel.TextColor3 = Color3.fromRGB(0, 0, 0)
 	TextLabel.Font = Enum.Font.GothamBold
 	TextLabel.TextSize = 14
@@ -711,6 +711,7 @@ t1.value57 = 0
 t1.value58 = nil
 local SHOOT_COOLDOWN = 0.18
 local SHOOT_SPREAD = 0.08
+local SHOOT_PREDICTION = 0.14
 
 local function playerHasKnife(player)
 	local character = player.Character
@@ -907,7 +908,15 @@ function shootMurdererOnce(force)
 
 	t1.value57 = tick()
 
-	local aimCFrame = murdererRoot.CFrame + Vector3.new(
+	local murdererHumanoid = murderer.Character and murderer.Character:FindFirstChildOfClass("Humanoid")
+	local murdererVelocity = murdererRoot.AssemblyLinearVelocity
+	local murdererMoveDir = murdererHumanoid and murdererHumanoid.MoveDirection or Vector3.new()
+
+	local predictedPos = murdererRoot.Position
+		+ murdererVelocity * Vector3.new(0, 0.5, 0) * SHOOT_PREDICTION
+		+ murdererMoveDir * 2.8
+
+	local aimCFrame = CFrame.new(predictedPos) + Vector3.new(
 		(math.random() - 0.5) * SHOOT_SPREAD,
 		(math.random() - 0.5) * SHOOT_SPREAD,
 		(math.random() - 0.5) * SHOOT_SPREAD
@@ -929,7 +938,7 @@ function shootMurdererOnce(force)
 				local remoteFunction = createBeam.CreateBeam:FindFirstChildWhichIsA("RemoteFunction")
 
 				if remoteFunction then
-					remoteFunction:InvokeServer(1, murdererRoot.Position, "AH2")
+					remoteFunction:InvokeServer(1, predictedPos, "AH2")
 				end
 			end
 		end)
@@ -2271,25 +2280,55 @@ function findNearestCoin()
 	return nearest, nearestDist
 end
 
+local UNDERGROUND_DEPTH = 25
+
 function startCoinFarm()
 	if t1.value44 then
 		return
 	end
 
+	local lastSafePos = nil
+	local activeTween = nil
+
 	t1.value44 = task.spawn(function()
 		while true do
 			if not _G.MM2.autoFarm then
+				pcall(function()
+					if activeTween then
+						activeTween:Cancel()
+					end
+				end)
+
 				if t1.value36 and t1.value36.Parent then
 					t1.value36:Destroy()
 				end
 
 				t1.value36 = nil
+
+				local stopChar = LP.Character
+				local stopHrp = stopChar and stopChar:FindFirstChild("HumanoidRootPart")
+
+				if stopHrp then
+					if lastSafePos then
+						stopHrp.CFrame = CFrame.new(lastSafePos + Vector3.new(0, 3, 0))
+					end
+
+					stopHrp.Anchored = false
+				end
+
 				t1.value44 = nil
 
 				return
 			end
 
-			local coin, dist = findNearestCoin()
+			pcall(function()
+				if activeTween then
+					activeTween:Cancel()
+					activeTween = nil
+				end
+			end)
+
+			local coin = findNearestCoin()
 
 			if not coin then
 				if t1.value36 and t1.value36.Parent then
@@ -2305,8 +2344,17 @@ function startCoinFarm()
 				if not hrp then
 					task.wait(0.1)
 				else
-					local targetPos = coin.Position
-					local travelTime = math.max(dist / _G.MM2.rutaSpeed, 0.1)
+					local coinPos = coin.Position
+					local underY = coinPos.Y - UNDERGROUND_DEPTH
+
+					if underY < -450 then
+						underY = -450
+					end
+
+					local underPos = Vector3.new(coinPos.X, underY, coinPos.Z)
+					local risePos = Vector3.new(coinPos.X, coinPos.Y + 1, coinPos.Z)
+					local horizontal = Vector3.new(coinPos.X - hrp.Position.X, 0, coinPos.Z - hrp.Position.Z).Magnitude
+					local travelTime = math.max(horizontal / _G.MM2.rutaSpeed, 0.05)
 
 					if not (t1.value36 and t1.value36.Parent) then
 						t1.value36 = Instance.new("Part")
@@ -2324,38 +2372,82 @@ function startCoinFarm()
 						local tracer = t1.value36
 
 						if tracer and tracer.Parent and hrp.Parent then
-							local len = (targetPos - hrp.Position).Magnitude
+							local len = (coinPos - hrp.Position).Magnitude
 
 							tracer.Size = Vector3.new(0.4, 0.4, math.max(len, 0.1))
-							tracer.CFrame = CFrame.new(hrp.Position, targetPos) * CFrame.new(0, 0, -len / 2)
+							tracer.CFrame = CFrame.new(hrp.Position, coinPos) * CFrame.new(0, 0, -len / 2)
 						end
 					end)
 
-					local tween = TweenService:Create(hrp, TweenInfo.new(travelTime, Enum.EasingStyle.Linear), {
-						CFrame = CFrame.new(targetPos)
-					})
-
-					tween:Play()
-
-					local ClickDetector = coin:FindFirstChildWhichIsA("ClickDetector")
-
-					if ClickDetector then
-						pcall(function()
-							fireclickdetector(ClickDetector)
-						end)
-					end
-
-					task.wait(travelTime * 0.7)
-
-					if ClickDetector then
-						pcall(function()
-							fireclickdetector(ClickDetector)
-						end)
-					end
-
 					pcall(function()
-						tween:Cancel()
+						hrp.Anchored = true
+						hrp.CFrame = CFrame.new(hrp.Position.X, underY, hrp.Position.Z)
+
+						activeTween = TweenService:Create(hrp, TweenInfo.new(travelTime, Enum.EasingStyle.Linear), {
+							CFrame = CFrame.new(underPos)
+						})
+
+						activeTween:Play()
+						task.wait(travelTime + 0.02)
+
+						if not hrp.Parent then
+							return
+						end
+
+						local riseDist = math.max(risePos.Y - hrp.Position.Y, 1)
+						local riseTime = math.max(riseDist / 60, 0.05)
+
+						activeTween = TweenService:Create(hrp, TweenInfo.new(riseTime, Enum.EasingStyle.Linear), {
+							CFrame = CFrame.new(risePos)
+						})
+
+						activeTween:Play()
+						task.wait(riseTime + 0.02)
+
+						if not hrp.Parent then
+							return
+						end
+
+						local ClickDetector = coin:FindFirstChildWhichIsA("ClickDetector")
+
+						pcall(function()
+							if firetouchinterest then
+								firetouchinterest(hrp, coin, 0)
+								firetouchinterest(hrp, coin, 1)
+							end
+						end)
+
+						if ClickDetector then
+							pcall(function()
+								fireclickdetector(ClickDetector)
+							end)
+						end
+
+						task.wait(0.15)
+
+						if coin.Parent and hrp.Parent then
+							pcall(function()
+								if firetouchinterest then
+									firetouchinterest(hrp, coin, 0)
+									firetouchinterest(hrp, coin, 1)
+								end
+							end)
+
+							if ClickDetector then
+								pcall(function()
+									fireclickdetector(ClickDetector)
+								end)
+							end
+
+							task.wait(0.2)
+						end
+
+						lastSafePos = risePos
 					end)
+
+					if hrp.Parent then
+						hrp.CFrame = CFrame.new(underPos)
+					end
 
 					tracerConn:Disconnect()
 				end
@@ -2922,17 +3014,9 @@ tabAutoShoot:Toggle({
 	end
 })
 
-tabAutoShoot:Button({
-	Title = "Disparar Ahora",
-	Description = "Dispara al Murderer sin importar la vista",
-	Callback = function()
-		shootMurdererOnce(true)
-	end
-})
-
 tabAutoShoot:Label({
 	Title = "Requiere ser Sheriff o tener la Gun",
-	Description = "Detecta al Murderer por rol o cuchillo"
+	Description = "Dispara con prediccion de movimiento al Murderer"
 })
 
 local v349 = v116:Tab({
@@ -3299,4 +3383,4 @@ task.spawn(function()
 		loadConfig(true)
 	end)
 end)
-print("yupitactico hub v0.3 cargado correctamente!")
+print("yupitactico hub v0.4 cargado correctamente!")
