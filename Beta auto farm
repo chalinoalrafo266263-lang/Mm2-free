@@ -1251,7 +1251,39 @@ function stopAnimation()
 	t1.value26 = {}
 end
 
-t1.value27 = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
+local function fetchWindUILib()
+	local urls = {
+		"https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua",
+		"https://cdn.jsdelivr.net/gh/Footagesus/WindUI@main/dist/main.lua",
+	}
+
+	for _, url in ipairs(urls) do
+		local ok, res = pcall(function()
+			return game:HttpGet(url)
+		end)
+
+		if ok and type(res) == "string" and #res > 10000 and res:sub(1, 1) ~= "<" then
+			local compiled, compileErr = loadstring(res)
+
+			if compiled then
+				return compiled()
+			end
+
+			warn("[yupitactico hub] WindUI con error de sintaxis desde " .. url .. ": " .. tostring(compileErr))
+		else
+			warn("[yupitactico hub] No se pudo descargar WindUI desde " .. url)
+		end
+	end
+
+	print("[yupitactico hub] ERROR: no se pudo cargar la libreria WindUI. Revisa tu conexion o ejecuta de nuevo.")
+	return nil
+end
+
+t1.value27 = fetchWindUILib()
+
+if not t1.value27 then
+	return
+end
 
 local value27 = t1.value27
 local UDim2_ = UDim2
@@ -3136,12 +3168,12 @@ local animaciones = {
 	{ titulo = "Cheer (R15)", desc = "Celebrates", id = 507770677 },
 	{ titulo = "Laugh (R15)", desc = "Laughs", id = 507770818 },
 	{ titulo = "Salute", desc = "Military salute (official emote)", id = 3360689775 },
-	{ titulo = "Dance Clásico (R6)", desc = "The classic R6 dance", id = 182435998 },
+	{ titulo = "Dance Clasico (R6)", desc = "The classic R6 dance", id = 182435998 },
 	{ titulo = "Caminar (R6)", desc = "Walking animation", id = 180426354 },
 	{ titulo = "Idle (R6)", desc = "Standing still animation", id = 180435571 },
 	{ titulo = "Saltar (R6)", desc = "Jumping animation", id = 125750702 },
 	{ titulo = "Sentarse (R6)", desc = "Sitting animation", id = 178130996 },
-	{ titulo = "Caída (R6)", desc = "Falling animation", id = 180436148 },
+	{ titulo = "Caida (R6)", desc = "Falling animation", id = 180436148 },
 	{ titulo = "Escalar (R6)", desc = "Climbing animation", id = 180436334 },
 	{ titulo = "Herramienta (R6)", desc = "Holding a tool", id = 182393478 },
 }
@@ -3157,7 +3189,7 @@ for _, anim in ipairs(animaciones) do
 end
 
 v347:Button({
-	Title = "Quitar Animación",
+	Title = "Quitar Animacion",
 	Desc = "Stops the current animation",
 	Callback = function()
 		stopAnimation()
@@ -3310,7 +3342,7 @@ v351:Button({
 	Callback = GrabarRuta
 })
 v351:Button({
-	Title = "Parar Grabación",
+	Title = "Parar Grabacion",
 	Desc = "Stops the route recording",
 	Callback = PararGrabacion
 })
@@ -3336,7 +3368,7 @@ local v352 = v116:Tab({
 })
 
 v352.Button(v352, {
-	Title = "Server Hop (Más Lleno)",
+	Title = "Server Hop (Mas Lleno)",
 	Desc = "Jumps to the most populated server",
 	Callback = function()
 		serverHopToMostFull()
@@ -3378,7 +3410,7 @@ v353.Button(v353, {
 	end
 })
 v353.Button(v353, {
-	Title = "Obtener Versión Premium",
+	Title = "Obtener Version Premium",
 	Desc = "Contact us on TikTok for more features",
 	Callback = function()
 		setclipboard("https://tiktok.com/@user_019283892928")
