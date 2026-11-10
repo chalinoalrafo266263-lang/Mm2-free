@@ -7,6 +7,7 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService")
 task.spawn(function()
 	task.wait(1)
 
@@ -37,7 +38,7 @@ task.spawn(function()
 	TextLabel.Name = "VersionText"
 	TextLabel.Size = UDim2.new(1, 0, 1, 0)
 	TextLabel.BackgroundTransparency = 1
-	TextLabel.Text = "v0.4"
+	TextLabel.Text = "v0.5"
 	TextLabel.TextColor3 = Color3.fromRGB(0, 0, 0)
 	TextLabel.Font = Enum.Font.GothamBold
 	TextLabel.TextSize = 14
@@ -701,17 +702,34 @@ function applyFlingGun()
 	end
 end
 
--- ============================================================= Auto Shoot
--- Tecnica del remote interno "Shoot" de la Gun de MM2:
--- gun.Shoot:FireServer(miCFrame, cframeDelObjetivo) funciona incluso con el
--- arma en la mochila. El murderer se detecta por rol o por llevar el Knife.
+-- ============================================================= Silent Aim
+-- Reemplaza al aimbot: los disparos MANUALES del jugador se redirigen al
+-- enemigo dentro del circulo FOV. Tecnica del remote interno "Shoot" de la
+-- Gun de MM2: gun.Shoot:FireServer(miCFrame, cframeObjetivo) funciona incluso
+-- con el arma en la mochila. El murderer se detecta por rol o por el Knife.
+-- Los jugadores en _G.MM2.ignoreList nunca son seleccionados como objetivo.
 
-t1.value56 = false
+_G.MM2.silentAim = false
+_G.MM2.showFovCircle = true
+_G.MM2.fovRadius = 150
+_G.MM2.bulletTracer = true
+_G.MM2.murdererLine = false
+_G.MM2.ignoreList = {}
+
 t1.value57 = 0
-t1.value58 = nil
-local SHOOT_COOLDOWN = 0.18
-local SHOOT_SPREAD = 0.08
-local SHOOT_PREDICTION = 0.14
+
+local SILENT_PREDICTION = 0.14
+local SILENT_SPREAD = 0.05
+local SILENT_MIN_INTERVAL = 0.15
+
+local canDraw = false
+
+pcall(function()
+	local testCircle = Drawing.new("Circle")
+
+	testCircle:Remove()
+	canDraw = true
+end)
 
 local function playerHasKnife(player)
 	local character = player.Character
@@ -741,7 +759,7 @@ local function findMurdererTarget()
 	local nearestDist = math.huge
 
 	for _, player in ipairs(Players:GetPlayers()) do
-		if player ~= LP and player.Character then
+		if player ~= LP and player.Character and not _G.MM2.ignoreList[player.Name] then
 			local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
 			local rootPart = player.Character:FindFirstChild("HumanoidRootPart")
 
@@ -875,34 +893,147 @@ local function tryPickupDroppedGun()
 	end
 end
 
-function shootMurdererOnce(force)
-	if not force and tick() - t1.value57 < SHOOT_COOLDOWN then
-		return false
+local fovCircle = nil
+local murdererLineDraw = nil
+
+local function safeRemoveDrawing(obj)
+	pcall(function()
+		if obj then
+			obj:Remove()
+		end
+	end)
+end
+
+local function ensureFovCircle()
+	if not canDraw then
+		return nil
+	end
+
+	if not fovCircle then
+		fovCircle = Drawing.new("Circle")
+
+		fovCircle.Thickness = 1.5
+		fovCircle.NumSides = 64
+		fovCircle.Filled = false
+		fovCircle.Color = Color3.fromRGB(60, 255, 120)
+		fovCircle.Transparency = 0.9
+	end
+
+	return fovCircle
+end
+
+local function ensureMurdererLineDraw()
+	if not canDraw then
+		return nil
+	end
+
+	if not murdererLineDraw then
+		murdererLineDraw = Drawing.new("Line")
+
+		murdererLineDraw.Thickness = 1.5
+		murdererLineDraw.Transparency = 0.85
+	end
+
+	return murdererLineDraw
+end
+
+local function drawBulletTracer(fromPos, toPos)
+	if not canDraw then
+		return
+	end
+
+	pcall(function()
+		local camera = workspace.CurrentCamera
+
+		if not camera then
+			return
+		end
+
+		local fromScreen = camera:WorldToViewportPoint(fromPos)
+		local toScreen = camera:WorldToViewportPoint(toPos)
+
+		if fromScreen.Z <= 0 or toScreen.Z <= 0 then
+			return
+		end
+
+		local tracerLine = Drawing.new("Line")
+
+		tracerLine.From = Vector2.new(fromScreen.X, fromScreen.Y)
+		tracerLine.To = Vector2.new(toScreen.X, toScreen.Y)
+		tracerLine.Color = Color3.fromRGB(255, 225, 60)
+		tracerLine.Thickness = 2
+		tracerLine.Transparency = 1
+		tracerLine.Visible = true
+
+		task.spawn(function()
+			for i = 1, 12 do
+				task.wait(0.03)
+
+				pcall(function()
+					tracerLine.Transparency = 1 - i / 12
+				end)
+			end
+
+			safeRemoveDrawing(tracerLine)
+		end)
+	end)
+end
+
+local function findSilentAimTarget()
+	local camera = workspace.CurrentCamera
+
+	if not camera then
+		return nil, nil
 	end
 
 	local murderer = findMurdererTarget()
 
 	if not murderer then
+		return nil, nil
+	end
+
+	local murdererRoot = murderer.Character and murderer.Character:FindFirstChild("HumanoidRootPart")
+
+	if not murdererRoot then
+		return nil, nil
+	end
+
+	local screenPoint, onScreen = camera:WorldToViewportPoint(murdererRoot.Position)
+	local center = camera.ViewportSize / 2
+	local screenDist = (Vector2.new(screenPoint.X, screenPoint.Y) - center).Magnitude
+
+	if not onScreen or screenDist > _G.MM2.fovRadius then
+		return nil, nil
+	end
+
+	return murderer, murdererRoot
+end
+
+function fireSilentShot()
+	if not _G.MM2.silentAim then
 		return false
 	end
 
-	if not force and not isTargetVisible(murderer) then
+	if tick() - t1.value57 < SILENT_MIN_INTERVAL then
+		return false
+	end
+
+	local murderer, murdererRoot = findSilentAimTarget()
+
+	if not murderer then
 		return false
 	end
 
 	local myCharacter = LP.Character
 	local myRoot = myCharacter and myCharacter:FindFirstChild("HumanoidRootPart")
-	local murdererRoot = murderer.Character and murderer.Character:FindFirstChild("HumanoidRootPart")
 
-	if not (myRoot and murdererRoot) then
+	if not myRoot then
 		return false
 	end
 
 	local gun, shootRemote = equipGunNow()
 
 	if not gun then
-		tryPickupDroppedGun()
-
 		return false
 	end
 
@@ -913,13 +1044,13 @@ function shootMurdererOnce(force)
 	local murdererMoveDir = murdererHumanoid and murdererHumanoid.MoveDirection or Vector3.new()
 
 	local predictedPos = murdererRoot.Position
-		+ murdererVelocity * Vector3.new(0, 0.5, 0) * SHOOT_PREDICTION
+		+ murdererVelocity * Vector3.new(0, 0.5, 0) * SILENT_PREDICTION
 		+ murdererMoveDir * 2.8
 
 	local aimCFrame = CFrame.new(predictedPos) + Vector3.new(
-		(math.random() - 0.5) * SHOOT_SPREAD,
-		(math.random() - 0.5) * SHOOT_SPREAD,
-		(math.random() - 0.5) * SHOOT_SPREAD
+		(math.random() - 0.5) * SILENT_SPREAD,
+		(math.random() - 0.5) * SILENT_SPREAD,
+		(math.random() - 0.5) * SILENT_SPREAD
 	)
 
 	local fired = false
@@ -944,19 +1075,102 @@ function shootMurdererOnce(force)
 		end)
 	end
 
+	if _G.MM2.bulletTracer then
+		drawBulletTracer(myRoot.Position, predictedPos)
+	end
+
 	return true
 end
 
-task.spawn(function()
-	while true do
-		task.wait(0.1)
+local function updateCombatDrawings()
+	local camera = workspace.CurrentCamera
 
-		if t1.value56 and t1.value6 and t1.value6.Parent then
-			pcall(function()
-				shootMurdererOnce(false)
-			end)
-		end
+	if not camera then
+		return
 	end
+
+	local circle = nil
+
+	if _G.MM2.silentAim and _G.MM2.showFovCircle then
+		circle = ensureFovCircle()
+	end
+
+	if circle then
+		circle.Position = camera.ViewportSize / 2
+		circle.Radius = _G.MM2.fovRadius
+		circle.Visible = true
+	elseif fovCircle then
+		fovCircle.Visible = false
+	end
+
+	local line = nil
+
+	if _G.MM2.murdererLine then
+		line = ensureMurdererLineDraw()
+	end
+
+	if not line then
+		if murdererLineDraw then
+			murdererLineDraw.Visible = false
+		end
+
+		return
+	end
+
+	local murderer = findMurdererTarget()
+
+	if not murderer or not murderer.Character then
+		line.Visible = false
+
+		return
+	end
+
+	local myRoot = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+	local murdererRoot = murderer.Character and murderer.Character:FindFirstChild("HumanoidRootPart")
+
+	if not (myRoot and murdererRoot) then
+		line.Visible = false
+
+		return
+	end
+
+	local fromScreen = camera:WorldToViewportPoint(myRoot.Position)
+	local toScreen = camera:WorldToViewportPoint(murdererRoot.Position)
+
+	if fromScreen.Z <= 0 or toScreen.Z <= 0 then
+		line.Visible = false
+
+		return
+	end
+
+	line.From = Vector2.new(fromScreen.X, fromScreen.Y)
+	line.To = Vector2.new(toScreen.X, toScreen.Y)
+
+	if isTargetVisible(murderer) then
+		line.Color = Color3.fromRGB(60, 255, 60)
+	else
+		line.Color = Color3.fromRGB(255, 60, 60)
+	end
+
+	line.Visible = true
+end
+
+if canDraw then
+	RunService.RenderStepped:Connect(function()
+		pcall(updateCombatDrawings)
+	end)
+end
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then
+		return
+	end
+
+	if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
+		return
+	end
+
+	pcall(fireSilentShot)
 end)
 
 t1.value25 = nil
@@ -1982,100 +2196,6 @@ task.spawn(function()
 	end
 end)
 
-function aimbotMurderer()
-	if not _G.MM2.aimbot then
-		return
-	end
-
-	local v225, v226, v227 = pairs(t1.value28:GetPlayers())
-	local huge = math.huge
-	local v229 = nil
-
-	while true do
-		local v230
-
-		v227, v230 = v225(v226, v227)
-
-		if not v227 then
-			break
-		end
-
-		local v231 = v230 ~= t1.value29
-
-		if v231 then
-			v231 = v230.Character
-
-			if v231 then
-				v231 = getRole(v230) == "Murderer"
-			end
-		end
-
-		local HumanoidRootPart, Magnitude
-
-		if v231 then
-			HumanoidRootPart = v230.Character:FindFirstChild("HumanoidRootPart")
-
-			local Character = t1.value29.Character
-
-			if Character then
-				Character = t1.value29.Character:FindFirstChild("HumanoidRootPart")
-			end
-
-			if HumanoidRootPart and Character then
-				Magnitude = (Character.Position - HumanoidRootPart.Position).Magnitude
-
-				if Magnitude >= huge then
-					HumanoidRootPart = v229
-					Magnitude = huge
-				end
-			else
-				HumanoidRootPart = v229
-				Magnitude = huge
-			end
-		else
-			HumanoidRootPart = v229
-			Magnitude = huge
-		end
-
-		v229 = HumanoidRootPart
-		huge = Magnitude
-	end
-
-	local Parent
-
-	if v229 then
-		Parent = v229.Parent
-	else
-		Parent = v229
-	end
-
-	local CurrentCamera = Parent and workspace.CurrentCamera
-
-	if not CurrentCamera then
-		return
-	end
-
-	local Position = v229.Position
-	local Velocity = v229.Velocity or Vector3.new(0, 0, 0)
-	local Character = t1.value29.Character
-
-	if Character then
-		Character = t1.value29.Character:FindFirstChild("HumanoidRootPart")
-	end
-
-	if Character then
-		Character = Character.Position
-	end
-
-	local Magnitude = ((Character or CurrentCamera.CFrame.Position) - Position).Magnitude
-	local bulletSpeed = _G.MM2.bulletSpeed or 500
-	local leadFactor = _G.MM2.leadFactor or 0.8
-	local v243 = Position - Velocity * (Magnitude / bulletSpeed) * leadFactor + Vector3.new(0, 1.5, 0)
-	local Position2 = CurrentCamera.CFrame.Position
-	local cFrame = CFrame.lookAt(Position2, v243)
-
-	CurrentCamera.CFrame = CurrentCamera.CFrame:Lerp(cFrame, 0.9)
-end
 function autoEquipGun()
 	if not _G.MM2.autoEquip then
 		return
@@ -2709,7 +2829,6 @@ task.spawn(function()
 			updateESP()
 			updateEspGun()
 			updateMurdererHitbox()
-			aimbotMurderer()
 			autoGun()
 			autoEquipGun()
 			autoKill()
@@ -2743,7 +2862,7 @@ local v339 = v116:Tab({
 
 v339.Toggle(v339, {
 	Title = "ESP Body + Nombre",
-	Description = "Detecta Murderer/Sheriff",
+	Description = "Shows who is Murderer and Sheriff on screen",
 	Default = true,
 	Callback = function(p12)
 		_G.MM2.esp = p12
@@ -2769,7 +2888,7 @@ v339.Toggle(v339, {
 })
 v339.Toggle(v339, {
 	Title = "ESP Gun (Tracer)",
-	Description = "Detecta arma tirada",
+	Description = "Detects the dropped gun",
 	Default = false,
 	Callback = function(p13)
 		_G.MM2.espGun = p13
@@ -2798,16 +2917,121 @@ local v344 = v116:Tab({
 })
 
 v344.Toggle(v344, {
-	Title = "Aimbot Murderer 70% (Lock + Atrás)",
-	Description = "Apunta cámara con lead inverso",
+	Title = "Silent Aim",
+	Description = "Your manual shots hit the enemy inside the FOV circle",
 	Default = false,
 	Callback = function(p14)
-		_G.MM2.aimbot = p14
+		_G.MM2.silentAim = p14
 	end
 })
 v344.Toggle(v344, {
+	Title = "Show FOV Circle",
+	Description = "Draws the silent aim radius circle on your screen",
+	Default = true,
+	Callback = function(p60)
+		_G.MM2.showFovCircle = p60
+	end
+})
+v344:Slider({
+	Title = "FOV Radius",
+	Description = "Radius of the silent aim circle in pixels",
+	Min = 40,
+	Max = 600,
+	Default = 150,
+	Callback = function(p61)
+		_G.MM2.fovRadius = p61
+	end
+})
+v344.Toggle(v344, {
+	Title = "Bullet Tracer",
+	Description = "Draws the bullet path when your shot goes to the enemy",
+	Default = true,
+	Callback = function(p62)
+		_G.MM2.bulletTracer = p62
+	end
+})
+v344.Toggle(v344, {
+	Title = "Murderer Line",
+	Description = "Green line when the enemy is visible, red when behind a wall",
+	Default = false,
+	Callback = function(p63)
+		_G.MM2.murdererLine = p63
+	end
+})
+v344.Toggle(v344, {
+	Title = "Auto Equip Gun",
+	Description = "Automatically equips the gun so you can shoot manually",
+	Default = false,
+	Callback = function(p64)
+		_G.MM2.autoEquip = p64
+	end
+})
+
+local ignoreChoices = {}
+
+for _, plr in ipairs(Players:GetPlayers()) do
+	if plr ~= LP then
+		table.insert(ignoreChoices, plr.Name)
+	end
+end
+
+local ignoreDropdown = v344:Dropdown({
+	Title = "Ignore Players",
+	Description = "Players Silent Aim and Auto Shoot must not target",
+	Values = ignoreChoices,
+	Multi = true,
+	Callback = function(options)
+		local list = {}
+
+		if type(options) == "table" then
+			for key, val in pairs(options) do
+				if type(val) == "string" then
+					list[val] = true
+				elseif type(key) == "string" and val == true then
+					list[key] = true
+				end
+			end
+		elseif type(options) == "string" then
+			list[options] = true
+		end
+
+		_G.MM2.ignoreList = list
+	end
+})
+
+v344:Button({
+	Title = "Refresh Player List",
+	Description = "Updates the ignore dropdown with the players in this server",
+	Callback = function()
+		local names = {}
+
+		for _, plr in ipairs(Players:GetPlayers()) do
+			if plr ~= LP then
+				table.insert(names, plr.Name)
+			end
+		end
+
+		pcall(function()
+			ignoreDropdown:Refresh(names)
+		end)
+	end
+})
+
+v344:Button({
+	Title = "Clear Ignore List",
+	Description = "Removes every player from the ignore list",
+	Callback = function()
+		_G.MM2.ignoreList = {}
+	end
+})
+
+v344:Label({
+	Title = "How to use Silent Aim",
+	Description = "Turn on Silent Aim, get the gun, click: the shot goes to the enemy inside the circle"
+})
+v344.Toggle(v344, {
 	Title = "Hitbox Murderer 0%",
-	Description = "Expande cuerpo a 20x20x20",
+	Description = "Expands the Murderer hitbox to 20x20x20",
 	Default = false,
 	Callback = function(p15)
 		_G.MM2.murdererHitbox = p15
@@ -2821,7 +3045,7 @@ local v345 = v116:Tab({
 
 v345.Toggle(v345, {
 	Title = "Auto Farm 50%",
-	Description = "Movimiento suave tipo Ruta",
+	Description = "Smooth route-style movement that farms coins underground",
 	Default = false,
 	Callback = function(p16)
 		_G.MM2.autoFarm = p16
@@ -2858,7 +3082,7 @@ v345.Toggle(v345, {
 })
 v345:Toggle({
 	Title = "Auto Grab Gun (GunDrop)",
-	Description = "TP al GunDrop, agarra y vuelve",
+	Description = "Teleports to the GunDrop, grabs it and returns",
 	Default = true,
 	Callback = function(p17)
 		t1.value45 = p17
@@ -2866,7 +3090,7 @@ v345:Toggle({
 })
 v345.Toggle(v345, {
 	Title = "Auto Gun 100%",
-	Description = "Moverse al arma sin lag",
+	Description = "Walks to the gun without lag",
 	Default = false,
 	Callback = function(p18)
 		_G.MM2.autoGun = p18
@@ -2874,7 +3098,7 @@ v345.Toggle(v345, {
 })
 v345:Toggle({
 	Title = "Auto Equip Gun",
-	Description = "Equipar arma seguro",
+	Description = "Equips the gun safely",
 	Default = false,
 	Callback = function(p19)
 		_G.MM2.autoEquip = p19
@@ -2882,7 +3106,7 @@ v345:Toggle({
 })
 v345.Toggle(v345, {
 	Title = "Auto Kill (Rango 200)",
-	Description = "TP directo + ataque 200 studs",
+	Description = "Direct teleport + 200 studs attack",
 	Default = false,
 	Callback = function(p20)
 		_G.MM2.autoKill = p20
@@ -2890,7 +3114,7 @@ v345.Toggle(v345, {
 })
 v345.Toggle(v345, {
 	Title = "Auto Equip Knife",
-	Description = "Fuerza equipar cuchillo",
+	Description = "Force equips the knife",
 	Default = false,
 	Callback = function(p21)
 		_G.MM2.autoEquipKnife = p21
@@ -2904,22 +3128,22 @@ local v347 = v116:Tab({
 
 -- Animaciones oficiales de Roblox (creator = Roblox, verificadas por API)
 local animaciones = {
-	{ titulo = "Dance 1 (R15)", desc = "Baile oficial de Roblox", id = 507771019 },
-	{ titulo = "Dance 2 (R15)", desc = "Variante del baile 1", id = 507771955 },
-	{ titulo = "Dance 3 (R15)", desc = "Variante del baile 1", id = 507772104 },
-	{ titulo = "Wave (R15)", desc = "Saludar", id = 507770239 },
-	{ titulo = "Point (R15)", desc = "Señalar", id = 507770453 },
-	{ titulo = "Cheer (R15)", desc = "Celebrar", id = 507770677 },
-	{ titulo = "Laugh (R15)", desc = "Reír", id = 507770818 },
-	{ titulo = "Salute", desc = "Saludo militar (emote oficial)", id = 3360689775 },
-	{ titulo = "Dance Clásico (R6)", desc = "El baile clásico de R6", id = 182435998 },
-	{ titulo = "Caminar (R6)", desc = "Animación de caminar", id = 180426354 },
-	{ titulo = "Idle (R6)", desc = "Animación de quieto", id = 180435571 },
-	{ titulo = "Saltar (R6)", desc = "Animación de salto", id = 125750702 },
-	{ titulo = "Sentarse (R6)", desc = "Animación de sentarse", id = 178130996 },
-	{ titulo = "Caída (R6)", desc = "Animación de caída", id = 180436148 },
-	{ titulo = "Escalar (R6)", desc = "Animación de trepar", id = 180436334 },
-	{ titulo = "Herramienta (R6)", desc = "Sostener herramienta", id = 182393478 },
+	{ titulo = "Dance 1 (R15)", desc = "Official Roblox dance", id = 507771019 },
+	{ titulo = "Dance 2 (R15)", desc = "Variant of dance 1", id = 507771955 },
+	{ titulo = "Dance 3 (R15)", desc = "Variant of dance 1", id = 507772104 },
+	{ titulo = "Wave (R15)", desc = "Waves hello", id = 507770239 },
+	{ titulo = "Point (R15)", desc = "Points at something", id = 507770453 },
+	{ titulo = "Cheer (R15)", desc = "Celebrates", id = 507770677 },
+	{ titulo = "Laugh (R15)", desc = "Laughs", id = 507770818 },
+	{ titulo = "Salute", desc = "Military salute (official emote)", id = 3360689775 },
+	{ titulo = "Dance Clásico (R6)", desc = "The classic R6 dance", id = 182435998 },
+	{ titulo = "Caminar (R6)", desc = "Walking animation", id = 180426354 },
+	{ titulo = "Idle (R6)", desc = "Standing still animation", id = 180435571 },
+	{ titulo = "Saltar (R6)", desc = "Jumping animation", id = 125750702 },
+	{ titulo = "Sentarse (R6)", desc = "Sitting animation", id = 178130996 },
+	{ titulo = "Caída (R6)", desc = "Falling animation", id = 180436148 },
+	{ titulo = "Escalar (R6)", desc = "Climbing animation", id = 180436334 },
+	{ titulo = "Herramienta (R6)", desc = "Holding a tool", id = 182393478 },
 }
 
 for _, anim in ipairs(animaciones) do
@@ -2934,7 +3158,7 @@ end
 
 v347:Button({
 	Title = "Quitar Animación",
-	Description = "Detener animación actual",
+	Description = "Stops the current animation",
 	Callback = function()
 		stopAnimation()
 	end
@@ -2947,7 +3171,7 @@ local v348 = v116:Tab({
 
 v348:Toggle({
 	Title = "Fling All",
-	Description = "Lanza a TODOS los jugadores",
+	Description = "Flings EVERY player in the server",
 	Default = false,
 	Callback = function(p22)
 		t1.value24 = p22
@@ -2961,7 +3185,7 @@ v348:Toggle({
 
 v348:Toggle({
 	Title = "Fling Murderer",
-	Description = "Lanza al Murderer cada 2.5 seg",
+	Description = "Flings the Murderer every 2.5 seconds",
 	Default = false,
 	Callback = function(p23)
 		t1.value22 = p23
@@ -2975,7 +3199,7 @@ v348:Toggle({
 
 v348:Toggle({
 	Title = "Fling Sheriff",
-	Description = "Lanza al Sheriff cada 2.5 seg",
+	Description = "Flings the Sheriff every 2.5 seconds",
 	Default = false,
 	Callback = function(p24)
 		t1.value23 = p24
@@ -2989,7 +3213,7 @@ v348:Toggle({
 
 v348:Toggle({
 	Title = "Anti Fling",
-	Description = "Bloquea flings y velocidades altas",
+	Description = "Blocks flings and high velocities",
 	Default = false,
 	Callback = function(p25)
 		if p25 then
@@ -3000,25 +3224,6 @@ v348:Toggle({
 	end
 })
 
-local tabAutoShoot = v116:Tab({
-	Title = "Auto Shoot",
-	Icon = "target"
-})
-
-tabAutoShoot:Toggle({
-	Title = "Auto Shoot (Murderer visible)",
-	Description = "Equipar y disparar cuando ve al Murderer",
-	Default = false,
-	Callback = function(p26)
-		t1.value56 = p26
-	end
-})
-
-tabAutoShoot:Label({
-	Title = "Requiere ser Sheriff o tener la Gun",
-	Description = "Dispara con prediccion de movimiento al Murderer"
-})
-
 local v349 = v116:Tab({
 	Title = "God Mode",
 	Icon = "shield"
@@ -3026,7 +3231,7 @@ local v349 = v116:Tab({
 
 v349:Toggle({
 	Title = "God Mode (4 Capas)",
-	Description = "Salud infinita + Anti-remotes + Anti-fuerzas",
+	Description = "Infinite health + anti-remotes + anti-forces",
 	Default = false,
 	Callback = function(p26)
 		if p26 then
@@ -3038,7 +3243,7 @@ v349:Toggle({
 })
 v349:Toggle({
 	Title = "Invisibilidad",
-	Description = "Nadie te ve",
+	Description = "Nobody can see you",
 	Default = false,
 	Callback = function(p27)
 		if p27 then
@@ -3050,7 +3255,7 @@ v349:Toggle({
 })
 v349.Toggle(v349, {
 	Title = "Doble Salto (2x)",
-	Description = "Salta dos veces automáticamente al presionar salto",
+	Description = "Double jumps automatically when you press jump",
 	Default = false,
 	Callback = function(p28)
 		t1.value46 = p28
@@ -3064,6 +3269,7 @@ local v350 = v116:Tab({
 
 v350.Toggle(v350, {
 	Title = "Show FPS",
+	Description = "Shows a live FPS counter on your screen",
 	Default = false,
 	Callback = function(p29)
 		t1.value9 = p29
@@ -3072,7 +3278,7 @@ v350.Toggle(v350, {
 })
 v350.Toggle(v350, {
 	Title = "Anti Lag / FPS Boost",
-	Description = "Quita partículas y sombras",
+	Description = "Removes particles and shadows",
 	Default = false,
 	Callback = function(p30)
 		if p30 then
@@ -3090,6 +3296,7 @@ local v351 = v116:Tab({
 
 v351:Slider({
 	Title = "Velocidad",
+	Description = "Route movement speed in studs per second",
 	Min = 1,
 	Max = 100,
 	Default = 25,
@@ -3099,22 +3306,27 @@ v351:Slider({
 })
 v351:Button({
 	Title = "Grabar Ruta",
+	Description = "Records your movement as a route",
 	Callback = GrabarRuta
 })
 v351:Button({
 	Title = "Parar Grabación",
+	Description = "Stops the route recording",
 	Callback = PararGrabacion
 })
 v351:Button({
 	Title = "Iniciar Ruta",
+	Description = "Starts walking the recorded route automatically",
 	Callback = IniciarRuta
 })
 v351:Button({
 	Title = "Parar Ruta",
+	Description = "Stops the automatic route",
 	Callback = PararRuta
 })
 v351:Button({
 	Title = "Borrar Tracers",
+	Description = "Removes all route tracer lines",
 	Callback = clearRouteTracers
 })
 
@@ -3125,14 +3337,14 @@ local v352 = v116:Tab({
 
 v352.Button(v352, {
 	Title = "Server Hop (Más Lleno)",
-	Description = "Servidor con más gente",
+	Description = "Jumps to the most populated server",
 	Callback = function()
 		serverHopToMostFull()
 	end
 })
 v352.Button(v352, {
 	Title = "Rejoin",
-	Description = "Mismo servidor",
+	Description = "Rejoins the same server",
 	Callback = function()
 		pcall(function()
 			t1.value32:Teleport(game.PlaceId, t1.value29)
@@ -3141,7 +3353,8 @@ v352.Button(v352, {
 })
 v352.Textbox(v352, {
 	Title = "Servidor Privado",
-	Placeholder = "Pega enlace o código...",
+	Description = "Private server link to join",
+	Placeholder = "Paste link or code...",
 	Callback = function(p32)
 		joinPrivateServer(p32)
 	end
@@ -3154,7 +3367,7 @@ local v353 = v116:Tab({
 
 v353:Label({
 	Title = "yupitactico hub - FREE",
-	Description = "Versión gratuita con funciones premium"
+	Description = "Free version with premium features"
 })
 v353.Button(v353, {
 	Title = "Copiar TikTok Oficial",
@@ -3166,7 +3379,7 @@ v353.Button(v353, {
 })
 v353.Button(v353, {
 	Title = "Obtener Versión Premium",
-	Description = "Contacta por TikTok para más funciones",
+	Description = "Contact us on TikTok for more features",
 	Callback = function()
 		setclipboard("https://tiktok.com/@user_019283892928")
 		print("TikTok copiado para contacto premium!")
@@ -3174,7 +3387,7 @@ v353.Button(v353, {
 })
 v353:Button({
 	Title = "Soporte y Ayuda",
-	Description = "¿Problemas? Escríbenos al TikTok",
+	Description = "Any problem? Message us on TikTok",
 	Callback = function()
 		setclipboard("https://tiktok.com/@user_019283892928")
 		print("TikTok de soporte copiado!")
@@ -3204,7 +3417,12 @@ function saveConfig()
 		flingMurderer = t1.value22 == true,
 		flingSheriff = t1.value23 == true,
 		flingAll = t1.value24 == true,
-		autoShoot = t1.value56 == true,
+		silentAim = _G.MM2.silentAim == true,
+		showFovCircle = _G.MM2.showFovCircle == true,
+		fovRadius = _G.MM2.fovRadius,
+		bulletTracer = _G.MM2.bulletTracer == true,
+		murdererLine = _G.MM2.murdererLine == true,
+		autoEquip = _G.MM2.autoEquip == true,
 		antiFling = isAntiFlingEnabled() == true,
 		rutaSpeed = _G.MM2.rutaSpeed
 	}
@@ -3281,8 +3499,14 @@ function loadConfig(silent)
 		t1.value23 = false
 	end
 
-	if data.autoShoot == true then
-		t1.value56 = true
+	_G.MM2.silentAim = data.silentAim == true
+	_G.MM2.showFovCircle = data.showFovCircle ~= false
+	_G.MM2.bulletTracer = data.bulletTracer ~= false
+	_G.MM2.murdererLine = data.murdererLine == true
+	_G.MM2.autoEquip = data.autoEquip == true
+
+	if type(data.fovRadius) == "number" then
+		_G.MM2.fovRadius = data.fovRadius
 	end
 
 	if data.antiFling == true then
@@ -3301,7 +3525,7 @@ local tabConfig = v116:Tab({
 
 tabConfig:Button({
 	Title = "Guardar Config",
-	Description = "Guarda tus opciones activas en el executor",
+	Description = "Saves your active options to the executor",
 	Callback = function()
 		saveConfig()
 	end
@@ -3309,21 +3533,22 @@ tabConfig:Button({
 
 tabConfig:Button({
 	Title = "Cargar Config",
-	Description = "Aplica la config guardada",
+	Description = "Loads the saved config",
 	Callback = function()
 		loadConfig(false)
 	end
 })
 
 tabConfig:Label({
-	Title = "La config se carga automaticamente al abrir el script",
-	Description = "Los toggles de la interfaz pueden no actualizarse visualmente"
+	Title = "Config loads automatically when the script starts",
+	Description = "Interface toggles may not update visually after auto-load"
 })
 v116:Tab({
 	Title = "Settings",
 	Icon = "settings"
 }):Button({
 	Title = "Destroy UI",
+	Description = "Closes and removes the whole interface",
 	Callback = function()
 		t1.value27:Destroy()
 
@@ -3383,4 +3608,4 @@ task.spawn(function()
 		loadConfig(true)
 	end)
 end)
-print("yupitactico hub v0.4 cargado correctamente!")
+print("yupitactico hub v0.5 cargado correctamente!")
