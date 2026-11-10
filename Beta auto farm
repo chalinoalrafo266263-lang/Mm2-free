@@ -1,6 +1,4 @@
--- This file was generated at discord.gg/syncrypt
 
--- Servicios (fix: el script usaba LP/Players/RunService sin definirlos)
 local Players = game:GetService("Players")
 local LP = Players.LocalPlayer
 local RunService = game:GetService("RunService")
@@ -38,7 +36,7 @@ task.spawn(function()
 	TextLabel.Name = "VersionText"
 	TextLabel.Size = UDim2.new(1, 0, 1, 0)
 	TextLabel.BackgroundTransparency = 1
-	TextLabel.Text = "v0.5"
+	TextLabel.Text = "v0.6"
 	TextLabel.TextColor3 = Color3.fromRGB(0, 0, 0)
 	TextLabel.Font = Enum.Font.GothamBold
 	TextLabel.TextSize = 14
@@ -702,12 +700,6 @@ function applyFlingGun()
 	end
 end
 
--- ============================================================= Silent Aim
--- Reemplaza al aimbot: los disparos MANUALES del jugador se redirigen al
--- enemigo dentro del circulo FOV. Tecnica del remote interno "Shoot" de la
--- Gun de MM2: gun.Shoot:FireServer(miCFrame, cframeObjetivo) funciona incluso
--- con el arma en la mochila. El murderer se detecta por rol o por el Knife.
--- Los jugadores en _G.MM2.ignoreList nunca son seleccionados como objetivo.
 
 _G.MM2.silentAim = false
 _G.MM2.showFovCircle = true
@@ -2862,7 +2854,7 @@ local v339 = v116:Tab({
 
 v339.Toggle(v339, {
 	Title = "ESP Body + Nombre",
-	Description = "Shows who is Murderer and Sheriff on screen",
+	Desc = "Shows who is Murderer and Sheriff on screen",
 	Default = true,
 	Callback = function(p12)
 		_G.MM2.esp = p12
@@ -2888,7 +2880,7 @@ v339.Toggle(v339, {
 })
 v339.Toggle(v339, {
 	Title = "ESP Gun (Tracer)",
-	Description = "Detects the dropped gun",
+	Desc = "Detects the dropped gun",
 	Default = false,
 	Callback = function(p13)
 		_G.MM2.espGun = p13
@@ -2918,7 +2910,7 @@ local v344 = v116:Tab({
 
 v344.Toggle(v344, {
 	Title = "Silent Aim",
-	Description = "Your manual shots hit the enemy inside the FOV circle",
+	Desc = "Your manual shots hit the enemy inside the FOV circle",
 	Default = false,
 	Callback = function(p14)
 		_G.MM2.silentAim = p14
@@ -2926,7 +2918,7 @@ v344.Toggle(v344, {
 })
 v344.Toggle(v344, {
 	Title = "Show FOV Circle",
-	Description = "Draws the silent aim radius circle on your screen",
+	Desc = "Draws the silent aim radius circle on your screen",
 	Default = true,
 	Callback = function(p60)
 		_G.MM2.showFovCircle = p60
@@ -2934,7 +2926,7 @@ v344.Toggle(v344, {
 })
 v344:Slider({
 	Title = "FOV Radius",
-	Description = "Radius of the silent aim circle in pixels",
+	Desc = "Radius of the silent aim circle in pixels",
 	Min = 40,
 	Max = 600,
 	Default = 150,
@@ -2944,7 +2936,7 @@ v344:Slider({
 })
 v344.Toggle(v344, {
 	Title = "Bullet Tracer",
-	Description = "Draws the bullet path when your shot goes to the enemy",
+	Desc = "Draws the bullet path when your shot goes to the enemy",
 	Default = true,
 	Callback = function(p62)
 		_G.MM2.bulletTracer = p62
@@ -2952,7 +2944,7 @@ v344.Toggle(v344, {
 })
 v344.Toggle(v344, {
 	Title = "Murderer Line",
-	Description = "Green line when the enemy is visible, red when behind a wall",
+	Desc = "Green line when the enemy is visible, red when behind a wall",
 	Default = false,
 	Callback = function(p63)
 		_G.MM2.murdererLine = p63
@@ -2960,14 +2952,14 @@ v344.Toggle(v344, {
 })
 v344.Toggle(v344, {
 	Title = "Auto Equip Gun",
-	Description = "Automatically equips the gun so you can shoot manually",
+	Desc = "Automatically equips the gun so you can shoot manually",
 	Default = false,
 	Callback = function(p64)
 		_G.MM2.autoEquip = p64
 	end
 })
 
-local ignoreChoices = {}
+local ignoreChoices = { "(none)" }
 
 for _, plr in ipairs(Players:GetPlayers()) do
 	if plr ~= LP then
@@ -2975,10 +2967,14 @@ for _, plr in ipairs(Players:GetPlayers()) do
 	end
 end
 
-local ignoreDropdown = v344:Dropdown({
+local ignoreDropdown = nil
+
+pcall(function()
+	ignoreDropdown = v344:Dropdown({
 	Title = "Ignore Players",
-	Description = "Players Silent Aim and Auto Shoot must not target",
+	Desc = "Players Silent Aim and Auto Shoot must not target",
 	Values = ignoreChoices,
+	Value = { "(none)" },
 	Multi = true,
 	Callback = function(options)
 		local list = {}
@@ -2997,11 +2993,16 @@ local ignoreDropdown = v344:Dropdown({
 
 		_G.MM2.ignoreList = list
 	end
-})
+	})
+end)
+
+if not ignoreDropdown then
+	print("[yupitactico hub] Ignore Players dropdown no disponible en esta libreria UI")
+end
 
 v344:Button({
 	Title = "Refresh Player List",
-	Description = "Updates the ignore dropdown with the players in this server",
+	Desc = "Updates the ignore dropdown with the players in this server",
 	Callback = function()
 		local names = {}
 
@@ -3019,7 +3020,7 @@ v344:Button({
 
 v344:Button({
 	Title = "Clear Ignore List",
-	Description = "Removes every player from the ignore list",
+	Desc = "Removes every player from the ignore list",
 	Callback = function()
 		_G.MM2.ignoreList = {}
 	end
@@ -3027,11 +3028,11 @@ v344:Button({
 
 v344:Label({
 	Title = "How to use Silent Aim",
-	Description = "Turn on Silent Aim, get the gun, click: the shot goes to the enemy inside the circle"
+	Desc = "Turn on Silent Aim, get the gun, click: the shot goes to the enemy inside the circle"
 })
 v344.Toggle(v344, {
 	Title = "Hitbox Murderer 0%",
-	Description = "Expands the Murderer hitbox to 20x20x20",
+	Desc = "Expands the Murderer hitbox to 20x20x20",
 	Default = false,
 	Callback = function(p15)
 		_G.MM2.murdererHitbox = p15
@@ -3045,7 +3046,7 @@ local v345 = v116:Tab({
 
 v345.Toggle(v345, {
 	Title = "Auto Farm 50%",
-	Description = "Smooth route-style movement that farms coins underground",
+	Desc = "Smooth route-style movement that farms coins underground",
 	Default = false,
 	Callback = function(p16)
 		_G.MM2.autoFarm = p16
@@ -3082,7 +3083,7 @@ v345.Toggle(v345, {
 })
 v345:Toggle({
 	Title = "Auto Grab Gun (GunDrop)",
-	Description = "Teleports to the GunDrop, grabs it and returns",
+	Desc = "Teleports to the GunDrop, grabs it and returns",
 	Default = true,
 	Callback = function(p17)
 		t1.value45 = p17
@@ -3090,7 +3091,7 @@ v345:Toggle({
 })
 v345.Toggle(v345, {
 	Title = "Auto Gun 100%",
-	Description = "Walks to the gun without lag",
+	Desc = "Walks to the gun without lag",
 	Default = false,
 	Callback = function(p18)
 		_G.MM2.autoGun = p18
@@ -3098,7 +3099,7 @@ v345.Toggle(v345, {
 })
 v345:Toggle({
 	Title = "Auto Equip Gun",
-	Description = "Equips the gun safely",
+	Desc = "Equips the gun safely",
 	Default = false,
 	Callback = function(p19)
 		_G.MM2.autoEquip = p19
@@ -3106,7 +3107,7 @@ v345:Toggle({
 })
 v345.Toggle(v345, {
 	Title = "Auto Kill (Rango 200)",
-	Description = "Direct teleport + 200 studs attack",
+	Desc = "Direct teleport + 200 studs attack",
 	Default = false,
 	Callback = function(p20)
 		_G.MM2.autoKill = p20
@@ -3114,7 +3115,7 @@ v345.Toggle(v345, {
 })
 v345.Toggle(v345, {
 	Title = "Auto Equip Knife",
-	Description = "Force equips the knife",
+	Desc = "Force equips the knife",
 	Default = false,
 	Callback = function(p21)
 		_G.MM2.autoEquipKnife = p21
@@ -3126,7 +3127,6 @@ local v347 = v116:Tab({
 	Icon = "music"
 })
 
--- Animaciones oficiales de Roblox (creator = Roblox, verificadas por API)
 local animaciones = {
 	{ titulo = "Dance 1 (R15)", desc = "Official Roblox dance", id = 507771019 },
 	{ titulo = "Dance 2 (R15)", desc = "Variant of dance 1", id = 507771955 },
@@ -3149,7 +3149,7 @@ local animaciones = {
 for _, anim in ipairs(animaciones) do
 	v347:Button({
 		Title = anim.titulo,
-		Description = anim.desc,
+		Desc = anim.desc,
 		Callback = function()
 			playAnimation(anim.id)
 		end
@@ -3158,7 +3158,7 @@ end
 
 v347:Button({
 	Title = "Quitar Animación",
-	Description = "Stops the current animation",
+	Desc = "Stops the current animation",
 	Callback = function()
 		stopAnimation()
 	end
@@ -3171,7 +3171,7 @@ local v348 = v116:Tab({
 
 v348:Toggle({
 	Title = "Fling All",
-	Description = "Flings EVERY player in the server",
+	Desc = "Flings EVERY player in the server",
 	Default = false,
 	Callback = function(p22)
 		t1.value24 = p22
@@ -3185,7 +3185,7 @@ v348:Toggle({
 
 v348:Toggle({
 	Title = "Fling Murderer",
-	Description = "Flings the Murderer every 2.5 seconds",
+	Desc = "Flings the Murderer every 2.5 seconds",
 	Default = false,
 	Callback = function(p23)
 		t1.value22 = p23
@@ -3199,7 +3199,7 @@ v348:Toggle({
 
 v348:Toggle({
 	Title = "Fling Sheriff",
-	Description = "Flings the Sheriff every 2.5 seconds",
+	Desc = "Flings the Sheriff every 2.5 seconds",
 	Default = false,
 	Callback = function(p24)
 		t1.value23 = p24
@@ -3213,7 +3213,7 @@ v348:Toggle({
 
 v348:Toggle({
 	Title = "Anti Fling",
-	Description = "Blocks flings and high velocities",
+	Desc = "Blocks flings and high velocities",
 	Default = false,
 	Callback = function(p25)
 		if p25 then
@@ -3231,7 +3231,7 @@ local v349 = v116:Tab({
 
 v349:Toggle({
 	Title = "God Mode (4 Capas)",
-	Description = "Infinite health + anti-remotes + anti-forces",
+	Desc = "Infinite health + anti-remotes + anti-forces",
 	Default = false,
 	Callback = function(p26)
 		if p26 then
@@ -3243,7 +3243,7 @@ v349:Toggle({
 })
 v349:Toggle({
 	Title = "Invisibilidad",
-	Description = "Nobody can see you",
+	Desc = "Nobody can see you",
 	Default = false,
 	Callback = function(p27)
 		if p27 then
@@ -3255,7 +3255,7 @@ v349:Toggle({
 })
 v349.Toggle(v349, {
 	Title = "Doble Salto (2x)",
-	Description = "Double jumps automatically when you press jump",
+	Desc = "Double jumps automatically when you press jump",
 	Default = false,
 	Callback = function(p28)
 		t1.value46 = p28
@@ -3269,7 +3269,7 @@ local v350 = v116:Tab({
 
 v350.Toggle(v350, {
 	Title = "Show FPS",
-	Description = "Shows a live FPS counter on your screen",
+	Desc = "Shows a live FPS counter on your screen",
 	Default = false,
 	Callback = function(p29)
 		t1.value9 = p29
@@ -3278,7 +3278,7 @@ v350.Toggle(v350, {
 })
 v350.Toggle(v350, {
 	Title = "Anti Lag / FPS Boost",
-	Description = "Removes particles and shadows",
+	Desc = "Removes particles and shadows",
 	Default = false,
 	Callback = function(p30)
 		if p30 then
@@ -3296,7 +3296,7 @@ local v351 = v116:Tab({
 
 v351:Slider({
 	Title = "Velocidad",
-	Description = "Route movement speed in studs per second",
+	Desc = "Route movement speed in studs per second",
 	Min = 1,
 	Max = 100,
 	Default = 25,
@@ -3306,27 +3306,27 @@ v351:Slider({
 })
 v351:Button({
 	Title = "Grabar Ruta",
-	Description = "Records your movement as a route",
+	Desc = "Records your movement as a route",
 	Callback = GrabarRuta
 })
 v351:Button({
 	Title = "Parar Grabación",
-	Description = "Stops the route recording",
+	Desc = "Stops the route recording",
 	Callback = PararGrabacion
 })
 v351:Button({
 	Title = "Iniciar Ruta",
-	Description = "Starts walking the recorded route automatically",
+	Desc = "Starts walking the recorded route automatically",
 	Callback = IniciarRuta
 })
 v351:Button({
 	Title = "Parar Ruta",
-	Description = "Stops the automatic route",
+	Desc = "Stops the automatic route",
 	Callback = PararRuta
 })
 v351:Button({
 	Title = "Borrar Tracers",
-	Description = "Removes all route tracer lines",
+	Desc = "Removes all route tracer lines",
 	Callback = clearRouteTracers
 })
 
@@ -3337,14 +3337,14 @@ local v352 = v116:Tab({
 
 v352.Button(v352, {
 	Title = "Server Hop (Más Lleno)",
-	Description = "Jumps to the most populated server",
+	Desc = "Jumps to the most populated server",
 	Callback = function()
 		serverHopToMostFull()
 	end
 })
 v352.Button(v352, {
 	Title = "Rejoin",
-	Description = "Rejoins the same server",
+	Desc = "Rejoins the same server",
 	Callback = function()
 		pcall(function()
 			t1.value32:Teleport(game.PlaceId, t1.value29)
@@ -3353,7 +3353,7 @@ v352.Button(v352, {
 })
 v352.Textbox(v352, {
 	Title = "Servidor Privado",
-	Description = "Private server link to join",
+	Desc = "Private server link to join",
 	Placeholder = "Paste link or code...",
 	Callback = function(p32)
 		joinPrivateServer(p32)
@@ -3367,11 +3367,11 @@ local v353 = v116:Tab({
 
 v353:Label({
 	Title = "yupitactico hub - FREE",
-	Description = "Free version with premium features"
+	Desc = "Free version with premium features"
 })
 v353.Button(v353, {
 	Title = "Copiar TikTok Oficial",
-	Description = "tiktok.com/@user_019283892928",
+	Desc = "tiktok.com/@user_019283892928",
 	Callback = function()
 		setclipboard("https://tiktok.com/@user_019283892928")
 		print("TikTok copiado al portapapeles: tiktok.com/@user_019283892928")
@@ -3379,7 +3379,7 @@ v353.Button(v353, {
 })
 v353.Button(v353, {
 	Title = "Obtener Versión Premium",
-	Description = "Contact us on TikTok for more features",
+	Desc = "Contact us on TikTok for more features",
 	Callback = function()
 		setclipboard("https://tiktok.com/@user_019283892928")
 		print("TikTok copiado para contacto premium!")
@@ -3387,13 +3387,12 @@ v353.Button(v353, {
 })
 v353:Button({
 	Title = "Soporte y Ayuda",
-	Description = "Any problem? Message us on TikTok",
+	Desc = "Any problem? Message us on TikTok",
 	Callback = function()
 		setclipboard("https://tiktok.com/@user_019283892928")
 		print("TikTok de soporte copiado!")
 	end
 })
--- ============================================================= Config
 local CONFIG_FILE = "yupitactico_hub_config.json"
 
 local function hasFileAPI()
@@ -3525,7 +3524,7 @@ local tabConfig = v116:Tab({
 
 tabConfig:Button({
 	Title = "Guardar Config",
-	Description = "Saves your active options to the executor",
+	Desc = "Saves your active options to the executor",
 	Callback = function()
 		saveConfig()
 	end
@@ -3533,7 +3532,7 @@ tabConfig:Button({
 
 tabConfig:Button({
 	Title = "Cargar Config",
-	Description = "Loads the saved config",
+	Desc = "Loads the saved config",
 	Callback = function()
 		loadConfig(false)
 	end
@@ -3541,14 +3540,14 @@ tabConfig:Button({
 
 tabConfig:Label({
 	Title = "Config loads automatically when the script starts",
-	Description = "Interface toggles may not update visually after auto-load"
+	Desc = "Interface toggles may not update visually after auto-load"
 })
 v116:Tab({
 	Title = "Settings",
 	Icon = "settings"
 }):Button({
 	Title = "Destroy UI",
-	Description = "Closes and removes the whole interface",
+	Desc = "Closes and removes the whole interface",
 	Callback = function()
 		t1.value27:Destroy()
 
@@ -3608,4 +3607,4 @@ task.spawn(function()
 		loadConfig(true)
 	end)
 end)
-print("yupitactico hub v0.5 cargado correctamente!")
+print("yupitactico hub v0.6 cargado correctamente!")
