@@ -701,6 +701,8 @@ function applyFlingGun()
 end
 
 
+if type(_G.MM2) ~= "table" then _G.MM2 = {} end
+
 _G.MM2.silentAim = false
 _G.MM2.showFovCircle = true
 _G.MM2.fovRadius = 150
@@ -1298,21 +1300,20 @@ local v116 = value27.CreateWindow(value27, {
 	SideBarWidth = 200
 })
 
-_G.MM2 = {
-	esp = true,
-	espGun = false,
-	aimbot = false,
-	autoGun = false,
-	autoEquip = false,
-	autoFarm = false,
-	autoKill = false,
-	autoEquipKnife = false,
-	murdererHitbox = false,
-	rutaSpeed = 25,
-	autoGrabGun = true,
-	bulletSpeed = 500,
-	leadFactor = 0.8
-}
+_G.MM2 = type(_G.MM2) == "table" and _G.MM2 or {}
+if _G.MM2.esp == nil then _G.MM2.esp = true end
+if _G.MM2.espGun == nil then _G.MM2.espGun = false end
+if _G.MM2.aimbot == nil then _G.MM2.aimbot = false end
+if _G.MM2.autoGun == nil then _G.MM2.autoGun = false end
+if _G.MM2.autoEquip == nil then _G.MM2.autoEquip = false end
+if _G.MM2.autoFarm == nil then _G.MM2.autoFarm = false end
+if _G.MM2.autoKill == nil then _G.MM2.autoKill = false end
+if _G.MM2.autoEquipKnife == nil then _G.MM2.autoEquipKnife = false end
+if _G.MM2.murdererHitbox == nil then _G.MM2.murdererHitbox = false end
+if _G.MM2.rutaSpeed == nil then _G.MM2.rutaSpeed = 25 end
+if _G.MM2.autoGrabGun == nil then _G.MM2.autoGrabGun = true end
+if _G.MM2.bulletSpeed == nil then _G.MM2.bulletSpeed = 500 end
+if _G.MM2.leadFactor == nil then _G.MM2.leadFactor = 0.8 end
 t1.value28 = game:GetService("Players")
 t1.value29 = t1.value28.LocalPlayer
 t1.value30 = game:GetService("TweenService")
