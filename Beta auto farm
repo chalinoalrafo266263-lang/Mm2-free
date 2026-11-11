@@ -36,7 +36,7 @@ task.spawn(function()
 	TextLabel.Name = "VersionText"
 	TextLabel.Size = UDim2.new(1, 0, 1, 0)
 	TextLabel.BackgroundTransparency = 1
-	TextLabel.Text = "v0.6"
+	TextLabel.Text = "v0.7"
 	TextLabel.TextColor3 = Color3.fromRGB(0, 0, 0)
 	TextLabel.Font = Enum.Font.GothamBold
 	TextLabel.TextSize = 14
@@ -709,6 +709,9 @@ _G.MM2.fovRadius = 150
 _G.MM2.bulletTracer = true
 _G.MM2.murdererLine = false
 _G.MM2.ignoreList = {}
+_G.MM2.moveFov = false
+_G.MM2.fovCenter = nil
+_G.MM2.fovDragging = false
 
 t1.value57 = 0
 
@@ -909,7 +912,7 @@ local function ensureFovCircle()
 		fovCircle.Thickness = 1.5
 		fovCircle.NumSides = 64
 		fovCircle.Filled = false
-		fovCircle.Color = Color3.fromRGB(60, 255, 120)
+		fovCircle.Color = Color3.fromRGB(255, 255, 255)
 		fovCircle.Transparency = 0.9
 	end
 
@@ -954,7 +957,7 @@ local function drawBulletTracer(fromPos, toPos)
 
 		tracerLine.From = Vector2.new(fromScreen.X, fromScreen.Y)
 		tracerLine.To = Vector2.new(toScreen.X, toScreen.Y)
-		tracerLine.Color = Color3.fromRGB(255, 225, 60)
+		tracerLine.Color = Color3.fromRGB(0, 255, 0)
 		tracerLine.Thickness = 2
 		tracerLine.Transparency = 1
 		tracerLine.Visible = true
@@ -993,10 +996,14 @@ local function findSilentAimTarget()
 	end
 
 	local screenPoint, onScreen = camera:WorldToViewportPoint(murdererRoot.Position)
-	local center = camera.ViewportSize / 2
+	local center = _G.MM2.fovCenter or camera.ViewportSize / 2
 	local screenDist = (Vector2.new(screenPoint.X, screenPoint.Y) - center).Magnitude
 
 	if not onScreen or screenDist > _G.MM2.fovRadius then
+		return nil, nil
+	end
+
+	if not isTargetVisible(murderer) then
 		return nil, nil
 	end
 
@@ -1025,9 +1032,9 @@ function fireSilentShot()
 		return false
 	end
 
-	local gun, shootRemote = equipGunNow()
+	local gun, shootRemote = findGunTool()
 
-	if not gun then
+	if not gun or gun.Parent ~= myCharacter then
 		return false
 	end
 
@@ -1090,7 +1097,7 @@ local function updateCombatDrawings()
 	end
 
 	if circle then
-		circle.Position = camera.ViewportSize / 2
+		circle.Position = _G.MM2.fovCenter or camera.ViewportSize / 2
 		circle.Radius = _G.MM2.fovRadius
 		circle.Visible = true
 	elseif fovCircle then
@@ -1155,8 +1162,87 @@ if canDraw then
 	end)
 end
 
+local function computeSilentAim(targetRoot)
+	local murdererHumanoid = targetRoot.Parent and targetRoot.Parent:FindFirstChildOfClass("Humanoid")
+	local murdererVelocity = targetRoot.AssemblyLinearVelocity
+	local murdererMoveDir = murdererHumanoid and murdererHumanoid.MoveDirection or Vector3.new()
+	local predictedPos = targetRoot.Position
+		+ murdererVelocity * Vector3.new(0, 0.5, 0) * SILENT_PREDICTION
+		+ murdererMoveDir * 2.8
+
+	local aimCFrame = CFrame.new(predictedPos) + Vector3.new(
+		(math.random() - 0.5) * SILENT_SPREAD,
+		(math.random() - 0.5) * SILENT_SPREAD,
+		(math.random() - 0.5) * SILENT_SPREAD
+	)
+
+	return aimCFrame, predictedPos
+end
+
+local silentAimHooked = false
+
+pcall(function()
+	local oldNamecall
+
+	oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+		local method = getnamecallmethod()
+
+		if _G.MM2.silentAim and method == "FireServer" and self.Name == "Shoot" and self.Parent and (self.Parent.Name == "Gun" or self.Parent.Name == "Revolver") then
+			local okHook, target, targetRoot = pcall(findSilentAimTarget)
+
+			if okHook and target and targetRoot then
+				local args = { ... }
+				local aimCFrame, predictedPos = computeSilentAim(targetRoot)
+
+				if _G.MM2.bulletTracer then
+					local myRoot = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+
+					pcall(drawBulletTracer, myRoot and myRoot.Position or predictedPos, predictedPos)
+				end
+
+				args[2] = aimCFrame
+
+				return oldNamecall(self, unpack(args))
+			end
+		end
+
+		return oldNamecall(self, ...)
+	end)
+
+	silentAimHooked = true
+end)
+
+if silentAimHooked then
+	print("[yupitactico hub] Silent Aim manual listo: tus disparos se redirigen al objetivo visible")
+else
+	local function hookGunTool(tool)
+		if tool:IsA("Tool") and (tool:FindFirstChild("Shoot") or tool.Name == "Gun" or tool.Name == "Revolver") then
+			tool.Activated:Connect(function()
+				pcall(fireSilentShot)
+			end)
+		end
+	end
+
+	local function hookGunCharacter(character)
+		character.ChildAdded:Connect(function(child)
+			hookGunTool(child)
+		end)
+
+		for _, child in ipairs(character:GetChildren()) do
+			hookGunTool(child)
+		end
+	end
+
+	if LP.Character then
+		hookGunCharacter(LP.Character)
+	end
+
+	LP.CharacterAdded:Connect(hookGunCharacter)
+	print("[yupitactico hub] hookmetamethod no disponible: disparo manual alternativo activado")
+end
+
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
-	if gameProcessed then
+	if gameProcessed or not _G.MM2.moveFov then
 		return
 	end
 
@@ -1164,7 +1250,24 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		return
 	end
 
-	pcall(fireSilentShot)
+	_G.MM2.fovDragging = true
+	_G.MM2.fovCenter = Vector2.new(input.Position.X, input.Position.Y)
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if not _G.MM2.fovDragging then
+		return
+	end
+
+	if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement then
+		_G.MM2.fovCenter = Vector2.new(input.Position.X, input.Position.Y)
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+		_G.MM2.fovDragging = false
+	end
 end)
 
 t1.value25 = nil
@@ -2968,6 +3071,21 @@ v344:Slider({
 	end
 })
 v344.Toggle(v344, {
+	Title = "Move FOV Circle",
+	Desc = "Touch and drag on the screen to move the white circle",
+	Default = false,
+	Callback = function(pFov)
+		_G.MM2.moveFov = pFov
+	end
+})
+v344.Button(v344, {
+	Title = "Center FOV Circle",
+	Desc = "Puts the circle back in the middle of the screen",
+	Callback = function()
+		_G.MM2.fovCenter = nil
+	end
+})
+v344.Toggle(v344, {
 	Title = "Bullet Tracer",
 	Desc = "Draws the bullet path when your shot goes to the enemy",
 	Default = true,
@@ -3640,4 +3758,4 @@ task.spawn(function()
 		loadConfig(true)
 	end)
 end)
-print("yupitactico hub v0.6 cargado correctamente!")
+print("yupitactico hub v0.7 cargado correctamente!")
